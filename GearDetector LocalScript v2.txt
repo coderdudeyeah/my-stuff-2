@@ -1,0 +1,377 @@
+-- GearDetector LocalScript v2
+-- Place inside StarterPlayerScripts or StarterGui
+-- Scans workspace.Chars.{PlayerName}.CurrentGear for items
+-- containing "operator", "commander", or "bladedancer" in their name.
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------------------
+-- SETTINGS
+---------------------------------------------------------------------
+local SCAN_INTERVAL   = 1          -- seconds between full scans
+local KEYWORDS        = {"operator", "commander", "bladedancer"}
+local CHARS_PATH_NAME = "Chars"    -- the folder under workspace
+
+---------------------------------------------------------------------
+-- CLEANUP TABLE (tracks everything we create so we can destroy it)
+---------------------------------------------------------------------
+local connections = {}   -- store RBXScriptConnections
+local alive = true       -- flag to kill the loop
+
+---------------------------------------------------------------------
+-- GUI CREATION
+---------------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GearDetectorGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 320, 0, 400)
+mainFrame.Position = UDim2.new(1, -330, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BackgroundTransparency = 0.15
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = titleBar
+
+local titleFill = Instance.new("Frame")
+titleFill.Size = UDim2.new(1, 0, 0, 10)
+titleFill.Position = UDim2.new(0, 0, 1, -10)
+titleFill.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+titleFill.BorderSizePixel = 0
+titleFill.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -70, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "GEAR DETECTOR"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 16
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = "Status"
+statusLabel.Size = UDim2.new(1, -20, 0, 22)
+statusLabel.Position = UDim2.new(0, 10, 0, 42)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Scanning..."
+statusLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 13
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
+
+-- Scrolling frame for results
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Name = "ResultsScroll"
+scrollFrame.Size = UDim2.new(1, -20, 1, -76)
+scrollFrame.Position = UDim2.new(0, 10, 0, 68)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(180, 40, 40)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 4)
+listLayout.Parent = scrollFrame
+
+---------------------------------------------------------------------
+-- CLOSE BUTTON  (fully destroys script + GUI + connections)
+---------------------------------------------------------------------
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "Close"
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -32, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = titleBar
+
+local closeBtnCorner = Instance.new("UICorner")
+closeBtnCorner.CornerRadius = UDim.new(0, 6)
+closeBtnCorner.Parent = closeBtn
+
+local function destroyEverything()
+	-- Stop the scan loop
+	alive = false
+
+	-- Disconnect every tracked connection
+	for _, conn in ipairs(connections) do
+		if typeof(conn) == "RBXScriptConnection" and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	table.clear(connections)
+
+	-- Destroy the entire GUI tree
+	if screenGui then
+		screenGui:Destroy()
+		screenGui = nil
+	end
+
+	-- Destroy this script itself
+	if script then
+		script:Destroy()
+	end
+end
+
+table.insert(connections, closeBtn.MouseButton1Click:Connect(destroyEverything))
+
+---------------------------------------------------------------------
+-- MINIMIZE BUTTON
+---------------------------------------------------------------------
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "Toggle"
+toggleBtn.Size = UDim2.new(0, 28, 0, 28)
+toggleBtn.Position = UDim2.new(1, -64, 0, 4)
+toggleBtn.BackgroundTransparency = 1
+toggleBtn.Text = "–"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 18
+toggleBtn.Parent = titleBar
+
+local minimized = false
+table.insert(connections, toggleBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	if minimized then
+		mainFrame.Size = UDim2.new(0, 320, 0, 36)
+		toggleBtn.Text = "+"
+	else
+		mainFrame.Size = UDim2.new(0, 320, 0, 400)
+		toggleBtn.Text = "–"
+	end
+end))
+
+---------------------------------------------------------------------
+-- DRAGGABLE TITLE BAR
+---------------------------------------------------------------------
+local dragging, dragInput, dragStart, startPos
+
+table.insert(connections, titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = mainFrame.Position
+		local changedConn
+		changedConn = input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+				if changedConn then changedConn:Disconnect() end
+			end
+		end)
+		table.insert(connections, changedConn)
+	end
+end))
+
+table.insert(connections, titleBar.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end))
+
+table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+		mainFrame.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end))
+
+---------------------------------------------------------------------
+-- HELPER: check if a string contains any keyword (case-insensitive)
+---------------------------------------------------------------------
+local function matchesKeyword(name: string): boolean
+	local lower = string.lower(name)
+	for _, kw in ipairs(KEYWORDS) do
+		if string.find(lower, string.lower(kw)) then
+			return true
+		end
+	end
+	return false
+end
+
+---------------------------------------------------------------------
+-- HELPER: get the accent color based on which keyword matched
+---------------------------------------------------------------------
+local function getAccentColor(gearName: string): Color3
+	local lower = string.lower(gearName)
+	if string.find(lower, "operator") then
+		return Color3.fromRGB(220, 50, 50)      -- red
+	elseif string.find(lower, "commander") then
+		return Color3.fromRGB(220, 160, 30)      -- orange
+	elseif string.find(lower, "bladedancer") then
+		return Color3.fromRGB(100, 60, 220)      -- purple
+	end
+	return Color3.fromRGB(180, 180, 180)         -- fallback grey
+end
+
+---------------------------------------------------------------------
+-- HELPER: recursively search inside CurrentGear for matching items
+---------------------------------------------------------------------
+local function searchGear(container, results, playerName)
+	for _, child in ipairs(container:GetChildren()) do
+		if matchesKeyword(child.Name) then
+			table.insert(results, {
+				player   = playerName,
+				gearName = child.Name,
+				class    = child.ClassName,
+			})
+		end
+		if #child:GetChildren() > 0 then
+			searchGear(child, results, playerName)
+		end
+	end
+end
+
+---------------------------------------------------------------------
+-- GUI: create a result entry card
+---------------------------------------------------------------------
+local function createResultCard(info, order)
+	local card = Instance.new("Frame")
+	card.Name = "Card_" .. info.player .. "_" .. info.gearName
+	card.Size = UDim2.new(1, 0, 0, 48)
+	card.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	card.BorderSizePixel = 0
+	card.LayoutOrder = order
+
+	local cardCorner = Instance.new("UICorner")
+	cardCorner.CornerRadius = UDim.new(0, 6)
+	cardCorner.Parent = card
+
+	-- Colored left accent
+	local accent = Instance.new("Frame")
+	accent.Size = UDim2.new(0, 4, 1, -8)
+	accent.Position = UDim2.new(0, 4, 0, 4)
+	accent.BorderSizePixel = 0
+	accent.BackgroundColor3 = getAccentColor(info.gearName)
+	accent.Parent = card
+
+	local accentCorner = Instance.new("UICorner")
+	accentCorner.CornerRadius = UDim.new(0, 2)
+	accentCorner.Parent = accent
+
+	-- Player name
+	local playerLabel = Instance.new("TextLabel")
+	playerLabel.Size = UDim2.new(1, -20, 0, 22)
+	playerLabel.Position = UDim2.new(0, 16, 0, 2)
+	playerLabel.BackgroundTransparency = 1
+	playerLabel.Text = info.player
+	playerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	playerLabel.Font = Enum.Font.GothamBold
+	playerLabel.TextSize = 13
+	playerLabel.TextXAlignment = Enum.TextXAlignment.Left
+	playerLabel.Parent = card
+
+	-- Gear name + class
+	local gearLabel = Instance.new("TextLabel")
+	gearLabel.Size = UDim2.new(1, -20, 0, 20)
+	gearLabel.Position = UDim2.new(0, 16, 0, 24)
+	gearLabel.BackgroundTransparency = 1
+	gearLabel.Text = info.gearName .. "  [" .. info.class .. "]"
+	gearLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
+	gearLabel.Font = Enum.Font.Gotham
+	gearLabel.TextSize = 11
+	gearLabel.TextXAlignment = Enum.TextXAlignment.Left
+	gearLabel.Parent = card
+
+	return card
+end
+
+---------------------------------------------------------------------
+-- MAIN SCAN LOOP
+---------------------------------------------------------------------
+local scanCount = 0
+
+while alive do
+	scanCount += 1
+
+	local results = {}
+
+	local charsFolder = workspace:FindFirstChild(CHARS_PATH_NAME)
+	if charsFolder then
+		for _, charFolder in ipairs(charsFolder:GetChildren()) do
+			local currentGear = charFolder:FindFirstChild("CurrentGear")
+			if currentGear then
+				searchGear(currentGear, results, charFolder.Name)
+			end
+		end
+	end
+
+	-- Clear ALL old entries (Frames AND TextLabels), keep only UIListLayout
+	for _, child in ipairs(scrollFrame:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+
+	-- Populate GUI
+	if #results > 0 then
+		for i, info in ipairs(results) do
+			local card = createResultCard(info, i)
+			card.Parent = scrollFrame
+		end
+
+		-- Always snap scroll to the top so newest detections are visible
+		scrollFrame.CanvasPosition = Vector2.new(0, 0)
+
+		statusLabel.Text = string.format(
+			"Scan #%d | %d detected | op / cmd / blade",
+			scanCount, #results
+		)
+		statusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+	else
+		local noResult = Instance.new("TextLabel")
+		noResult.Size = UDim2.new(1, 0, 0, 30)
+		noResult.BackgroundTransparency = 1
+		noResult.Text = "No matching gear found."
+		noResult.TextColor3 = Color3.fromRGB(100, 100, 100)
+		noResult.Font = Enum.Font.Gotham
+		noResult.TextSize = 12
+		noResult.Parent = scrollFrame
+
+		scrollFrame.CanvasPosition = Vector2.new(0, 0)
+
+		statusLabel.Text = string.format(
+			"Scan #%d | 0 detected | Watching...",
+			scanCount
+		)
+		statusLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
+	end
+
+	task.wait(SCAN_INTERVAL)
+end
